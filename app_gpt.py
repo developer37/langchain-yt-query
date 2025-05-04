@@ -5,7 +5,7 @@ from langchain.chains import create_retrieval_chain, create_history_aware_retrie
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains.combine_documents import create_stuff_documents_chain
 import streamlit as st
-
+import re
 # Adding History
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
@@ -58,38 +58,49 @@ prompt = ChatPromptTemplate.from_messages(
 question_answer_chain = create_stuff_documents_chain(llm, prompt)
 
 history = StreamlitChatMessageHistory()
-
+def is_valid_youtube_url(url):
+    youtube_regex = r'(https?://)?(www\.)?(youtube|youtu|youtube-nocookie)\.(com|be)/.+'
+    return bool(re.match(youtube_regex, url))
 
 def process_youtube_url(url):
     with st.spinner("Processing YouTube video..."):
-        loader = YoutubeLoader.from_youtube_url(url)
+        try:  
+            if not is_valid_youtube_url(url):
+                st.error("Invalid YouTube URL. Please enter a valid URL.")
+                return
 
-        docs = loader.load()
-        if docs:
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000, chunk_overlap=200
-            )
-            chunks = text_splitter.split_documents(docs)
-            embeddings = OpenAIEmbeddings(openai_api_key=openai_key)
-            vector_store = Chroma.from_documents(chunks, embeddings)
-            retriever = vector_store.as_retriever()
-            history_aware_retriever = create_history_aware_retriever(
-                llm, retriever, contextualize_prompt
-            )
-            rag_chain = create_retrieval_chain(
-                history_aware_retriever, question_answer_chain
-            )
-            conversational_rag_chain = RunnableWithMessageHistory(
-                rag_chain,
-                lambda session_id: history,
-                input_messages_key="input",
-                history_messages_key="chat_history",
-                output_messages_key="answer",
-            )
-            st.session_state.crc = conversational_rag_chain
-            st.success("Video processed. Ask your questions")
-        else:
-            st.error("Video has no transcript. Please try another video")
+            loader = YoutubeLoader.from_youtube_url(url)
+            docs = loader.load()
+            if not docs:
+                st.error("Video has no transcript. Please try another video")
+                return
+                # Continue processing
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000, chunk_overlap=200
+                )
+                chunks = text_splitter.split_documents(docs)
+                embeddings = OpenAIEmbeddings(openai_api_key=openai_key)
+                vector_store = Chroma.from_documents(chunks, embeddings)
+                retriever = vector_store.as_retriever()
+                history_aware_retriever = create_history_aware_retriever(
+                    llm, retriever, contextualize_prompt
+                )
+                rag_chain = create_retrieval_chain(
+                    history_aware_retriever, question_answer_chain
+                )
+                conversational_rag_chain = RunnableWithMessageHistory(
+                    rag_chain,
+                    lambda session_id: history,
+                    input_messages_key="input",
+                    history_messages_key="chat_history",
+                    output_messages_key="answer",
+                )
+                st.session_state.crc = conversational_rag_chain
+                st.success("Video processed. Ask your questions")
+        except Exception as e:
+            st.error(f"Error processing video: {e}")
+            return
+            
 
 
 def clear_history():
